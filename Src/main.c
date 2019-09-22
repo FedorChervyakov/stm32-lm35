@@ -37,7 +37,10 @@
 /* CAUTION!!! This circuit uses LM358 op amp in non inverting configuration
  * to scale the 0-1 V output of LM35 to about 3.3 V range
  */
-#define OP_AMP_GAIN ((float) (1))
+#define OP_AMP_GAIN ((float32_t) 1)
+
+/* Size of ADC buffer */
+#define ADC_BUFFERSIZE ((uint32_t) 10)
 /* USER CODE END PD */
 
 /* Private macro -------------------------------------------------------------*/
@@ -56,36 +59,37 @@
   * @retval ADC conversion data equivalent voltage value (unit: mVolt)
   */
 #define __ADC_CALC_DATA_VOLTAGE(__VREFANALOG_VOLTAGE__, __ADC_DATA__)       \
-    ((__ADC_DATA__) * (__VREFANALOG_VOLTAGE__) / DIGITAL_SCALE_12BITS)
+   (__ADC_DATA__) * (__VREFANALOG_VOLTAGE__) / DIGITAL_SCALE_12BITS
+
 
 
 /* Calculate temperature corresponding to ADC voltage in mV */
 /* @retval Temperature in Degrees C*/
 #define __LM35_CALC_TEMP(__VOLTAGE__) \
-    (( __VOLTAGE__ ) / (10 * (OP_AMP_GAIN)))
+     (( __VOLTAGE__ ) / (10 * (OP_AMP_GAIN)))
 
 
 /* USER CODE END PM */
 
 /* Private variables ---------------------------------------------------------*/
 ADC_HandleTypeDef hadc1;
+DMA_HandleTypeDef hdma_adc1;
 
 UART_HandleTypeDef huart1;
 DMA_HandleTypeDef hdma_usart1_tx;
 
 /* USER CODE BEGIN PV */
 /* Variables for ADC conversion data */
-__IO   uint16_t   uhADCxConvertedData = VAR_CONVERTED_DATA_INIT_VALUE; /* ADC group regular conversion data */
+__IO uint16_t uhADCxConvertedData[ADC_BUFFERSIZE];
 
 /* Variables for ADC conversion data computation to physical values */
-float temperature  = 0.0;  /* Value of temperature calculated from ADC voltage (unit: mC) */
-
+float32_t temperature  = 0.0;  /* Value of temperature calculated from ADC voltage (unit: mC) */
 /* Variable to report status of ADC group regular unitary conversion          */
 /*  0: ADC group regular unitary conversion is not completed                  */
 /*  1: ADC group regular unitary conversion is completed                      */
 /*  2: ADC group regular unitary conversion has not been started yet          */
 /*     (initial state)                                                        */
-__IO   uint8_t ubAdcGrpRegularUnitaryConvStatus = 2; /* Variable set into ADC interruption callback */
+__IO uint8_t ubAdcGrpRegularUnitaryConvStatus = 2; /* Variable set into ADC interruption callback */
 /* USER CODE END PV */
 
 /* Private function prototypes -----------------------------------------------*/
@@ -151,12 +155,11 @@ int main(void)
     ubAdcGrpRegularUnitaryConvStatus = 0;
 
     /* Init variable containing ADC conversion data */
-    uhADCxConvertedData = VAR_CONVERTED_DATA_INIT_VALUE;
 
     /*## Start ADC conversions ###############################################*/
 
     /* Start ADC group regular conversion with IT */
-    if (HAL_ADC_Start_IT(&hadc1) != HAL_OK)
+    if (HAL_ADC_Start_DMA(&hadc1, (uint32_t *) uhADCxConvertedData, ADC_BUFFERSIZE) != HAL_OK)
     {
       /* ADC conversion start error */
       Error_Handler();
@@ -165,14 +168,14 @@ int main(void)
     /* Wait till conversion is done */
     while (ubAdcGrpRegularUnitaryConvStatus == 0);
 
-    if (HAL_ADC_Stop_IT(&hadc1) != HAL_OK)
+    if (HAL_ADC_Stop_DMA(&hadc1) != HAL_OK)
     {
         /* ADC conversion stop error */
         Error_Handler();
     }
 
     /*## Print temperature  ###############################################*/
-    printf("LM35 Temperature is %f \n\r", temperature);
+    printf("LM35 Temperature is %.3f \n\r", temperature);
 
     /*## Delay ###############################################*/
     HAL_Delay(750);
@@ -195,7 +198,7 @@ void SystemClock_Config(void)
 
   /** Macro to configure the PLL multiplication factor 
   */
-  __HAL_RCC_PLL_PLLM_CONFIG(RCC_PLLM_DIV2);
+  __HAL_RCC_PLL_PLLM_CONFIG(RCC_PLLM_DIV1);
   /** Macro to configure the PLL clock source 
   */
   __HAL_RCC_PLL_PLLSOURCE_CONFIG(RCC_PLLSOURCE_MSI);
@@ -211,7 +214,7 @@ void SystemClock_Config(void)
   RCC_OscInitStruct.MSIState = RCC_MSI_ON;
   RCC_OscInitStruct.HSICalibrationValue = RCC_HSICALIBRATION_DEFAULT;
   RCC_OscInitStruct.MSICalibrationValue = RCC_MSICALIBRATION_DEFAULT;
-  RCC_OscInitStruct.MSIClockRange = RCC_MSIRANGE_10;
+  RCC_OscInitStruct.MSIClockRange = RCC_MSIRANGE_6;
   RCC_OscInitStruct.PLL.PLLState = RCC_PLL_NONE;
   if (HAL_RCC_OscConfig(&RCC_OscInitStruct) != HAL_OK)
   {
@@ -226,10 +229,10 @@ void SystemClock_Config(void)
   RCC_ClkInitStruct.AHBCLKDivider = RCC_SYSCLK_DIV1;
   RCC_ClkInitStruct.APB1CLKDivider = RCC_HCLK_DIV1;
   RCC_ClkInitStruct.APB2CLKDivider = RCC_HCLK_DIV1;
-  RCC_ClkInitStruct.AHBCLK2Divider = RCC_SYSCLK_DIV1;
+  RCC_ClkInitStruct.AHBCLK2Divider = RCC_SYSCLK_DIV2;
   RCC_ClkInitStruct.AHBCLK4Divider = RCC_SYSCLK_DIV1;
 
-  if (HAL_RCC_ClockConfig(&RCC_ClkInitStruct, FLASH_LATENCY_1) != HAL_OK)
+  if (HAL_RCC_ClockConfig(&RCC_ClkInitStruct, FLASH_LATENCY_0) != HAL_OK)
   {
     Error_Handler();
   }
@@ -237,7 +240,7 @@ void SystemClock_Config(void)
   */
   PeriphClkInitStruct.PeriphClockSelection = RCC_PERIPHCLK_SMPS|RCC_PERIPHCLK_USART1
                               |RCC_PERIPHCLK_ADC;
-  PeriphClkInitStruct.PLLSAI1.PLLN = 8;
+  PeriphClkInitStruct.PLLSAI1.PLLN = 24;
   PeriphClkInitStruct.PLLSAI1.PLLP = RCC_PLLP_DIV2;
   PeriphClkInitStruct.PLLSAI1.PLLQ = RCC_PLLQ_DIV2;
   PeriphClkInitStruct.PLLSAI1.PLLR = RCC_PLLR_DIV2;
@@ -273,18 +276,18 @@ static void MX_ADC1_Init(void)
   /** Common config 
   */
   hadc1.Instance = ADC1;
-  hadc1.Init.ClockPrescaler = ADC_CLOCK_ASYNC_DIV2;
+  hadc1.Init.ClockPrescaler = ADC_CLOCK_ASYNC_DIV8;
   hadc1.Init.Resolution = ADC_RESOLUTION_12B;
   hadc1.Init.DataAlign = ADC_DATAALIGN_RIGHT;
-  hadc1.Init.ScanConvMode = ADC_SCAN_DISABLE;
+  hadc1.Init.ScanConvMode = ADC_SCAN_ENABLE;
   hadc1.Init.EOCSelection = ADC_EOC_SINGLE_CONV;
   hadc1.Init.LowPowerAutoWait = DISABLE;
   hadc1.Init.ContinuousConvMode = DISABLE;
-  hadc1.Init.NbrOfConversion = 1;
+  hadc1.Init.NbrOfConversion = 10;
   hadc1.Init.DiscontinuousConvMode = DISABLE;
   hadc1.Init.ExternalTrigConv = ADC_SOFTWARE_START;
   hadc1.Init.ExternalTrigConvEdge = ADC_EXTERNALTRIGCONVEDGE_NONE;
-  hadc1.Init.DMAContinuousRequests = DISABLE;
+  hadc1.Init.DMAContinuousRequests = ENABLE;
   hadc1.Init.Overrun = ADC_OVR_DATA_PRESERVED;
   hadc1.Init.OversamplingMode = DISABLE;
   if (HAL_ADC_Init(&hadc1) != HAL_OK)
@@ -299,6 +302,69 @@ static void MX_ADC1_Init(void)
   sConfig.SingleDiff = ADC_SINGLE_ENDED;
   sConfig.OffsetNumber = ADC_OFFSET_NONE;
   sConfig.Offset = 0;
+  if (HAL_ADC_ConfigChannel(&hadc1, &sConfig) != HAL_OK)
+  {
+    Error_Handler();
+  }
+  /** Configure Regular Channel 
+  */
+  sConfig.Rank = ADC_REGULAR_RANK_2;
+  if (HAL_ADC_ConfigChannel(&hadc1, &sConfig) != HAL_OK)
+  {
+    Error_Handler();
+  }
+  /** Configure Regular Channel 
+  */
+  sConfig.Rank = ADC_REGULAR_RANK_3;
+  if (HAL_ADC_ConfigChannel(&hadc1, &sConfig) != HAL_OK)
+  {
+    Error_Handler();
+  }
+  /** Configure Regular Channel 
+  */
+  sConfig.Rank = ADC_REGULAR_RANK_4;
+  if (HAL_ADC_ConfigChannel(&hadc1, &sConfig) != HAL_OK)
+  {
+    Error_Handler();
+  }
+  /** Configure Regular Channel 
+  */
+  sConfig.Rank = ADC_REGULAR_RANK_5;
+  if (HAL_ADC_ConfigChannel(&hadc1, &sConfig) != HAL_OK)
+  {
+    Error_Handler();
+  }
+  /** Configure Regular Channel 
+  */
+  sConfig.Rank = ADC_REGULAR_RANK_6;
+  if (HAL_ADC_ConfigChannel(&hadc1, &sConfig) != HAL_OK)
+  {
+    Error_Handler();
+  }
+  /** Configure Regular Channel 
+  */
+  sConfig.Rank = ADC_REGULAR_RANK_7;
+  if (HAL_ADC_ConfigChannel(&hadc1, &sConfig) != HAL_OK)
+  {
+    Error_Handler();
+  }
+  /** Configure Regular Channel 
+  */
+  sConfig.Rank = ADC_REGULAR_RANK_8;
+  if (HAL_ADC_ConfigChannel(&hadc1, &sConfig) != HAL_OK)
+  {
+    Error_Handler();
+  }
+  /** Configure Regular Channel 
+  */
+  sConfig.Rank = ADC_REGULAR_RANK_9;
+  if (HAL_ADC_ConfigChannel(&hadc1, &sConfig) != HAL_OK)
+  {
+    Error_Handler();
+  }
+  /** Configure Regular Channel 
+  */
+  sConfig.Rank = ADC_REGULAR_RANK_10;
   if (HAL_ADC_ConfigChannel(&hadc1, &sConfig) != HAL_OK)
   {
     Error_Handler();
@@ -334,7 +400,7 @@ static void MX_USART1_UART_Init(void)
   huart1.Init.WordLength = UART_WORDLENGTH_8B;
   huart1.Init.StopBits = UART_STOPBITS_1;
   huart1.Init.Parity = UART_PARITY_NONE;
-  huart1.Init.Mode = UART_MODE_TX_RX;
+  huart1.Init.Mode = UART_MODE_TX;
   huart1.Init.HwFlowCtl = UART_HWCONTROL_NONE;
   huart1.Init.OverSampling = UART_OVERSAMPLING_16;
   huart1.Init.OneBitSampling = UART_ONE_BIT_SAMPLE_DISABLE;
@@ -376,6 +442,9 @@ static void MX_DMA_Init(void)
   /* DMA1_Channel1_IRQn interrupt configuration */
   HAL_NVIC_SetPriority(DMA1_Channel1_IRQn, 0, 0);
   HAL_NVIC_EnableIRQ(DMA1_Channel1_IRQn);
+  /* DMA1_Channel2_IRQn interrupt configuration */
+  HAL_NVIC_SetPriority(DMA1_Channel2_IRQn, 0, 0);
+  HAL_NVIC_EnableIRQ(DMA1_Channel2_IRQn);
 
 }
 
@@ -445,19 +514,21 @@ void HAL_UART_TxCpltCallback ( UART_HandleTypeDef *huart)
  *  Description:  Conversion complete callback in non blocking mode
  * =====================================================================================
  */
-void HAL_ADC_ConvCpltCallback (ADC_HandleTypeDef *hadc)
+void HAL_ADC_ConvCpltCallback ( ADC_HandleTypeDef *hadc)
 {
-    /* Toggle LED2 to indicate completion */
+    /* Toggle LED2 to indicate completion (buffer full) */
     HAL_GPIO_TogglePin(LD2_GPIO_Port, LD2_Pin);
-
-    /* Retrieve ADC conversion data */
-    uhADCxConvertedData = HAL_ADC_GetValue(hadc);
-
 
     /* Computation of ADC conversions raw data to physical values           */
     /* using helper macro.                                                  */
+
+    float32_t mean = 0.0;
+    for (int i=0; i<ADC_BUFFERSIZE; i++) {
+        mean += uhADCxConvertedData[i] / ADC_BUFFERSIZE;
+    }
+
     temperature = __LM35_CALC_TEMP( \
-        __ADC_CALC_DATA_VOLTAGE(VDDA_APPLI, uhADCxConvertedData));
+                  __ADC_CALC_DATA_VOLTAGE(VDDA_APPLI, mean));
 
     /* Update status variable of ADC unitary conversion                     */
     ubAdcGrpRegularUnitaryConvStatus = 1;
