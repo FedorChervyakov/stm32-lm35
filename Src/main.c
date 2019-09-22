@@ -154,11 +154,9 @@ int main(void)
     /* performing a new ADC group regular conversion start.                   */
     ubAdcGrpRegularUnitaryConvStatus = 0;
 
-    /* Init variable containing ADC conversion data */
-
     /*## Start ADC conversions ###############################################*/
 
-    /* Start ADC group regular conversion with IT */
+    /* Start ADC conversion with DMA */
     if (HAL_ADC_Start_DMA(&hadc1, (uint32_t *) uhADCxConvertedData, ADC_BUFFERSIZE) != HAL_OK)
     {
       /* ADC conversion start error */
@@ -168,6 +166,7 @@ int main(void)
     /* Wait till conversion is done */
     while (ubAdcGrpRegularUnitaryConvStatus == 0);
 
+    /* Stop ADC conversion */
     if (HAL_ADC_Stop_DMA(&hadc1) != HAL_OK)
     {
         /* ADC conversion stop error */
@@ -298,7 +297,7 @@ static void MX_ADC1_Init(void)
   */
   sConfig.Channel = ADC_CHANNEL_1;
   sConfig.Rank = ADC_REGULAR_RANK_1;
-  sConfig.SamplingTime = ADC_SAMPLETIME_2CYCLES_5;
+  sConfig.SamplingTime = ADC_SAMPLETIME_640CYCLES_5;
   sConfig.SingleDiff = ADC_SINGLE_ENDED;
   sConfig.OffsetNumber = ADC_OFFSET_NONE;
   sConfig.Offset = 0;
