@@ -20,16 +20,15 @@
 
 /* Includes ------------------------------------------------------------------*/
 #include "main.h"
+#include "cmsis_os.h"
 
 /* Private includes ----------------------------------------------------------*/
 /* USER CODE BEGIN Includes */
-#include "stdio.h"
 #include "arm_math.h"
 /* USER CODE END Includes */
 
 /* Private typedef -----------------------------------------------------------*/
 /* USER CODE BEGIN PTD */
-
 /* USER CODE END PTD */
 
 /* Private define ------------------------------------------------------------*/
@@ -41,6 +40,8 @@
 
 /* Size of ADC buffer */
 #define ADC_BUFFERSIZE ((uint32_t) 10)
+
+#define ADC_COMPLETE_FLAG   ((uint32_t) 1)
 /* USER CODE END PD */
 
 /* Private macro -------------------------------------------------------------*/
@@ -78,18 +79,22 @@ DMA_HandleTypeDef hdma_adc1;
 UART_HandleTypeDef huart1;
 DMA_HandleTypeDef hdma_usart1_tx;
 
+typedef StaticTask_t osStaticThreadDef_t;
+typedef StaticQueue_t osStaticMessageQDef_t;
+osThreadId_t defaultTaskHandle;
+uint32_t defaultTaskBuffer[ 128 ];
+osStaticThreadDef_t defaultTaskControlBlock;
+osThreadId_t printTempTaskHandle;
+uint32_t printTempTaskBuffer[ 256 ];
+osStaticThreadDef_t printTempTaskControlBlock;
+osMessageQueueId_t tempQueueHandle;
+uint8_t tempQueueBuffer[ 16 * sizeof( float32_t ) ];
+osStaticMessageQDef_t tempQueueControlBlock;
 /* USER CODE BEGIN PV */
+osEventFlagsId_t event_id;                      /* Event flags id */
 /* Variables for ADC conversion data */
 __IO uint16_t uhADCxConvertedData[ADC_BUFFERSIZE];
 
-/* Variables for ADC conversion data computation to physical values */
-float32_t temperature  = 0.0;  /* Value of temperature calculated from ADC voltage (unit: mC) */
-/* Variable to report status of ADC group regular unitary conversion          */
-/*  0: ADC group regular unitary conversion is not completed                  */
-/*  1: ADC group regular unitary conversion is completed                      */
-/*  2: ADC group regular unitary conversion has not been started yet          */
-/*     (initial state)                                                        */
-__IO uint8_t ubAdcGrpRegularUnitaryConvStatus = 2; /* Variable set into ADC interruption callback */
 /* USER CODE END PV */
 
 /* Private function prototypes -----------------------------------------------*/
@@ -98,6 +103,9 @@ static void MX_GPIO_Init(void);
 static void MX_DMA_Init(void);
 static void MX_ADC1_Init(void);
 static void MX_USART1_UART_Init(void);
+void StartDefaultTask(void *argument);
+void StartPrintfTask(void *argument);
+
 /* USER CODE BEGIN PFP */
 
 /* USER CODE END PFP */
@@ -143,41 +151,72 @@ int main(void)
 
   /* USER CODE END 2 */
 
+  osKernelInitialize();
+
+  /* USER CODE BEGIN RTOS_MUTEX */
+  /* add mutexes, ... */
+  /* USER CODE END RTOS_MUTEX */
+
+  /* USER CODE BEGIN RTOS_SEMAPHORES */
+  /* add semaphores, ... */
+  /* USER CODE END RTOS_SEMAPHORES */
+
+  /* USER CODE BEGIN RTOS_TIMERS */
+  /* start timers, add new ones, ... */
+  /* USER CODE END RTOS_TIMERS */
+
+  /* Create the queue(s) */
+  /* definition and creation of tempQueue */
+  const osMessageQueueAttr_t tempQueue_attributes = {
+    .name = "tempQueue",
+    .cb_mem = &tempQueueControlBlock,
+    .cb_size = sizeof(tempQueueControlBlock),
+    .mq_mem = &tempQueueBuffer,
+    .mq_size = sizeof(tempQueueBuffer)
+  };
+  tempQueueHandle = osMessageQueueNew (16, sizeof(float32_t), &tempQueue_attributes);
+
+  /* USER CODE BEGIN RTOS_QUEUES */
+  /* add queues, ... */
+  /* USER CODE END RTOS_QUEUES */
+
+  /* Create the thread(s) */
+  /* definition and creation of defaultTask */
+  const osThreadAttr_t defaultTask_attributes = {
+    .name = "defaultTask",
+    .stack_mem = &defaultTaskBuffer[0],
+    .stack_size = sizeof(defaultTaskBuffer),
+    .cb_mem = &defaultTaskControlBlock,
+    .cb_size = sizeof(defaultTaskControlBlock),
+    .priority = (osPriority_t) osPriorityNormal,
+  };
+  defaultTaskHandle = osThreadNew(StartDefaultTask, NULL, &defaultTask_attributes);
+
+  /* definition and creation of printTempTask */
+  const osThreadAttr_t printTempTask_attributes = {
+    .name = "printTempTask",
+    .stack_mem = &printTempTaskBuffer[0],
+    .stack_size = sizeof(printTempTaskBuffer),
+    .cb_mem = &printTempTaskControlBlock,
+    .cb_size = sizeof(printTempTaskControlBlock),
+    .priority = (osPriority_t) osPriorityLow,
+  };
+  printTempTaskHandle = osThreadNew(StartPrintfTask, NULL, &printTempTask_attributes);
+
+  /* USER CODE BEGIN RTOS_THREADS */
+  /* Not a thread but placed here so Cube MX does not delete it */
+  event_id = osEventFlagsNew(NULL);
+  /* USER CODE END RTOS_THREADS */
+
+  /* Start scheduler */
+  osKernelStart();
+  
+  /* We should never get here as control is now taken by the scheduler */
+
   /* Infinite loop */
   /* USER CODE BEGIN WHILE */
   while (1)
   {
-    /* Turn Led 2 off before performing a new ADC conversion start */
-    HAL_GPIO_TogglePin(LD2_GPIO_Port, LD2_Pin);
-
-    /* Reset status variable of ADC group regular unitary conversion before   */
-    /* performing a new ADC group regular conversion start.                   */
-    ubAdcGrpRegularUnitaryConvStatus = 0;
-
-    /*## Start ADC conversions ###############################################*/
-
-    /* Start ADC conversion with DMA */
-    if (HAL_ADC_Start_DMA(&hadc1, (uint32_t *) uhADCxConvertedData, ADC_BUFFERSIZE) != HAL_OK)
-    {
-      /* ADC conversion start error */
-      Error_Handler();
-    }
-
-    /* Wait till conversion is done */
-    while (ubAdcGrpRegularUnitaryConvStatus == 0);
-
-    /* Stop ADC conversion */
-    if (HAL_ADC_Stop_DMA(&hadc1) != HAL_OK)
-    {
-        /* ADC conversion stop error */
-        Error_Handler();
-    }
-
-    /*## Print temperature  ###############################################*/
-    printf("LM35 Temperature is %.3f \n\r", temperature);
-
-    /*## Delay ###############################################*/
-    HAL_Delay(750);
     /* USER CODE END WHILE */
 
     /* USER CODE BEGIN 3 */
@@ -197,7 +236,7 @@ void SystemClock_Config(void)
 
   /** Macro to configure the PLL multiplication factor 
   */
-  __HAL_RCC_PLL_PLLM_CONFIG(RCC_PLLM_DIV1);
+  __HAL_RCC_PLL_PLLM_CONFIG(RCC_PLLM_DIV2);
   /** Macro to configure the PLL clock source 
   */
   __HAL_RCC_PLL_PLLSOURCE_CONFIG(RCC_PLLSOURCE_MSI);
@@ -213,7 +252,7 @@ void SystemClock_Config(void)
   RCC_OscInitStruct.MSIState = RCC_MSI_ON;
   RCC_OscInitStruct.HSICalibrationValue = RCC_HSICALIBRATION_DEFAULT;
   RCC_OscInitStruct.MSICalibrationValue = RCC_MSICALIBRATION_DEFAULT;
-  RCC_OscInitStruct.MSIClockRange = RCC_MSIRANGE_6;
+  RCC_OscInitStruct.MSIClockRange = RCC_MSIRANGE_10;
   RCC_OscInitStruct.PLL.PLLState = RCC_PLL_NONE;
   if (HAL_RCC_OscConfig(&RCC_OscInitStruct) != HAL_OK)
   {
@@ -231,7 +270,7 @@ void SystemClock_Config(void)
   RCC_ClkInitStruct.AHBCLK2Divider = RCC_SYSCLK_DIV2;
   RCC_ClkInitStruct.AHBCLK4Divider = RCC_SYSCLK_DIV1;
 
-  if (HAL_RCC_ClockConfig(&RCC_ClkInitStruct, FLASH_LATENCY_0) != HAL_OK)
+  if (HAL_RCC_ClockConfig(&RCC_ClkInitStruct, FLASH_LATENCY_1) != HAL_OK)
   {
     Error_Handler();
   }
@@ -239,7 +278,7 @@ void SystemClock_Config(void)
   */
   PeriphClkInitStruct.PeriphClockSelection = RCC_PERIPHCLK_SMPS|RCC_PERIPHCLK_USART1
                               |RCC_PERIPHCLK_ADC;
-  PeriphClkInitStruct.PLLSAI1.PLLN = 24;
+  PeriphClkInitStruct.PLLSAI1.PLLN = 6;
   PeriphClkInitStruct.PLLSAI1.PLLP = RCC_PLLP_DIV2;
   PeriphClkInitStruct.PLLSAI1.PLLQ = RCC_PLLQ_DIV2;
   PeriphClkInitStruct.PLLSAI1.PLLR = RCC_PLLR_DIV2;
@@ -439,10 +478,10 @@ static void MX_DMA_Init(void)
 
   /* DMA interrupt init */
   /* DMA1_Channel1_IRQn interrupt configuration */
-  HAL_NVIC_SetPriority(DMA1_Channel1_IRQn, 0, 0);
+  HAL_NVIC_SetPriority(DMA1_Channel1_IRQn, 5, 0);
   HAL_NVIC_EnableIRQ(DMA1_Channel1_IRQn);
   /* DMA1_Channel2_IRQn interrupt configuration */
-  HAL_NVIC_SetPriority(DMA1_Channel2_IRQn, 0, 0);
+  HAL_NVIC_SetPriority(DMA1_Channel2_IRQn, 5, 0);
   HAL_NVIC_EnableIRQ(DMA1_Channel2_IRQn);
 
 }
@@ -518,20 +557,8 @@ void HAL_ADC_ConvCpltCallback ( ADC_HandleTypeDef *hadc)
     /* Toggle LED2 to indicate completion (buffer full) */
     HAL_GPIO_TogglePin(LD2_GPIO_Port, LD2_Pin);
 
-    /* Computation of ADC conversions raw data to physical values           */
-    /* using helper macro.                                                  */
-
-    float32_t mean = 0.0;
-    for (int i=0; i<ADC_BUFFERSIZE; i++) {
-        mean += uhADCxConvertedData[i] / ADC_BUFFERSIZE;
-    }
-
-    temperature = __LM35_CALC_TEMP( \
-                  __ADC_CALC_DATA_VOLTAGE(VDDA_APPLI, mean));
-
-    /* Update status variable of ADC unitary conversion                     */
-    ubAdcGrpRegularUnitaryConvStatus = 1;
-
+    /* Set event flag to indicate ADC completion */
+    osEventFlagsSet(event_id, ADC_COMPLETE_FLAG);
 }		/* -----  end of function HAL_ADC_ConvCpltCallback  ----- */
 
 /**
@@ -547,6 +574,118 @@ void HAL_ADC_ErrorCallback(ADC_HandleTypeDef *hadc)
 }
 /* USER CODE END 4 */
 
+/* USER CODE BEGIN Header_StartDefaultTask */
+/**
+  * @brief  Function implementing the defaultTask thread.
+  * @param  argument: Not used 
+  * @retval None
+  */
+/* USER CODE END Header_StartDefaultTask */
+void StartDefaultTask(void *argument)
+{
+    
+    
+    
+    
+
+  /* USER CODE BEGIN 5 */
+
+  /* Variables for ADC conversion data computation to physical values */
+  float32_t temperature  = 0.0;  /* Value of temperature calculated from ADC voltage (unit: mC) */
+  float32_t mean;
+  /* Infinite loop */
+  for(;;)
+  {
+    /* Turn Led 2 off before performing a new ADC conversion start */
+    HAL_GPIO_TogglePin(LD2_GPIO_Port, LD2_Pin);
+
+    /*## Start ADC conversions ###############################################*/
+    /* Clear ADC conversion flag */
+    osEventFlagsClear(event_id, ADC_COMPLETE_FLAG);
+
+    /* Start ADC conversion with DMA */
+    if ( HAL_ADC_Start_DMA(&hadc1, (uint32_t *) uhADCxConvertedData, ADC_BUFFERSIZE) != HAL_OK)
+    {
+        /* ADC conversion start error */
+        Error_Handler();
+    }
+
+    /* Wait till conversion is done */
+    osEventFlagsWait(event_id, ADC_COMPLETE_FLAG, osFlagsWaitAny, osWaitForever);
+
+    /*## Stop ADC conversions ################################################*/
+    /* Stop ADC conversion with DMA */
+    if ( HAL_ADC_Stop_DMA(&hadc1) != HAL_OK)
+    {
+        /* ADC conversion stop error */
+        Error_Handler();
+    }
+
+    /*## Compute temperature #################################################*/
+    /* Computation of mean of ADC conversions raw data */
+    mean = 0.0;                                 /* Reset mean to 0 */
+    for (int i=0; i<ADC_BUFFERSIZE; i++) {
+        mean += uhADCxConvertedData[i] / ADC_BUFFERSIZE;
+    }
+    
+    /* Computation of temperature using helper macros */
+    temperature = __LM35_CALC_TEMP( \
+                  __ADC_CALC_DATA_VOLTAGE(VDDA_APPLI, mean));
+
+
+    /*## Print temperature ###################################################*/
+    //printf("LM35 Temperature is %.2f \n\r", temperature);
+    osMessageQueuePut(tempQueueHandle, &temperature, 1U, osWaitForever);
+
+    /*## Delay ###############################################################*/
+    osDelay(750);
+  }
+  /* USER CODE END 5 */ 
+}
+
+/* USER CODE BEGIN Header_StartPrintfTask */
+
+
+/**
+* @brief Function implementing the printTempTask thread.
+* @param argument: Not used
+* @retval None
+*/
+/* USER CODE END Header_StartPrintfTask */
+void StartPrintfTask(void *argument)
+{
+  /* USER CODE BEGIN StartPrintfTask */
+  float32_t temp;
+  /* Infinite loop */
+  for(;;)
+  {
+    osMessageQueueGet(tempQueueHandle, &temp, NULL, osWaitForever);
+    osDelay(10);
+  }
+  /* USER CODE END StartPrintfTask */
+}
+
+/**
+  * @brief  Period elapsed callback in non blocking mode
+  * @note   This function is called  when TIM1 interrupt took place, inside
+  * HAL_TIM_IRQHandler(). It makes a direct call to HAL_IncTick() to increment
+  * a global variable "uwTick" used as application time base.
+  * @param  htim : TIM handle
+  * @retval None
+  */
+void HAL_TIM_PeriodElapsedCallback(TIM_HandleTypeDef *htim)
+{
+  /* USER CODE BEGIN Callback 0 */
+
+  /* USER CODE END Callback 0 */
+  if (htim->Instance == TIM1) {
+    HAL_IncTick();
+  }
+  /* USER CODE BEGIN Callback 1 */
+
+  /* USER CODE END Callback 1 */
+}
+
 /**
   * @brief  This function is executed in case of error occurrence.
   * @retval None
@@ -559,11 +698,11 @@ void Error_Handler(void)
   while (1) {
       /* Loop foreva */
       HAL_GPIO_TogglePin(LD3_GPIO_Port, LD3_Pin);
-      HAL_Delay(200);
+      osDelay(200);
       HAL_GPIO_TogglePin(LD2_GPIO_Port, LD2_Pin);
-      HAL_Delay(200);
+      osDelay(200);
       HAL_GPIO_TogglePin(LD1_GPIO_Port, LD1_Pin);
-      HAL_Delay(200);
+      osDelay(200);
   } 
 
 
